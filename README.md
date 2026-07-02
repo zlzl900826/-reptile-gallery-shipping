@@ -1,3 +1,25 @@
+# Reptile Gallery 결제/수령 신청 사이트 v24 Render 배포 안정화
+
+## 이번 수정
+- Render 배포 시 Node.js 26 설치에서 오래 멈추는 문제를 줄이기 위해 Node 버전을 20.x로 고정했습니다.
+- GitHub에 이 버전 파일로 덮어올린 뒤 Render에서 Clear build cache & deploy를 누르세요.
+
+## Render 설정
+Build Command:
+```bash
+npm install
+```
+
+Start Command:
+```bash
+npm start
+```
+
+Root Directory:
+- GitHub 저장소 첫 화면에 server.js/package.json이 바로 보이면 비워두세요.
+- 저장소 안에 reptile-gallery-shipping 폴더가 있고 그 안에 server.js/package.json이 있으면 `reptile-gallery-shipping`으로 설정하세요.
+
+
 # Reptile Gallery 결제/수령 신청 사이트 v23
 
 ## 이번 수정
