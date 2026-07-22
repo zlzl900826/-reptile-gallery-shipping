@@ -8,6 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'rg2026!';
+const APP_VERSION = 'v28-csv-upload-fixed';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 console.log(`데이터 저장 위치: ${DB_PATH}`);
@@ -836,7 +837,8 @@ app.get('/api/admin/export.csv', requireAdmin, (req, res) => {
   res.send(csv);
 });
 
-app.get('/health', (req, res) => res.json({ ok: true }));
+app.get('/health', (req, res) => res.json({ ok: true, version: APP_VERSION }));
+app.get('/api/version', (req, res) => res.json({ version: APP_VERSION }));
 
 function getLanUrls(port) {
   const interfaces = os.networkInterfaces();
@@ -855,7 +857,7 @@ app.get('/api/network', (req, res) => {
 app.listen(PORT, HOST, () => {
   const lanUrls = getLanUrls(PORT);
   console.log('');
-  console.log('렙타일갤러리 결제/수령 신청 사이트가 실행되었습니다.');
+  console.log(`렙타일갤러리 결제/수령 신청 사이트가 실행되었습니다. ${APP_VERSION}`);
   console.log(`컴퓨터 접속: http://localhost:${PORT}`);
   if (lanUrls.length) {
     console.log('핸드폰 접속:');
