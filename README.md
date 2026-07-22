@@ -1,3 +1,30 @@
+# Reptile Gallery 결제/수령 신청 사이트 v26 - CSV 업로드 추가
+
+## 이번 수정
+- 관리자 페이지에 `CSV 업로드 / 백업 복구` 기능 추가
+- 기존 `CSV 다운로드` 파일을 다시 업로드해서 낙찰자/개체/신청정보 복구 가능
+- 업로드 방식 2가지 지원
+  - 기존 자료 유지 + 추가/수정
+  - 기존 낙찰자 전체 삭제 후 CSV로 교체
+- 빈 CSV 양식 다운로드 버튼 추가
+
+## Render 설정 유지
+Build Command:
+```bash
+cd reptile-gallery-shipping && npm install
+```
+
+Start Command:
+```bash
+cd reptile-gallery-shipping && npm start
+```
+
+Persistent Disk 사용 시 환경변수:
+```text
+DATA_DIR=/var/data
+```
+
+
 # Reptile Gallery 결제/수령 신청 사이트 v25 - Persistent Disk 안정화
 
 ## 이번 수정

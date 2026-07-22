@@ -574,11 +574,228 @@ app.delete('/api/admin/bidders/:bidderId', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+
+function parseCsvText(text = '') {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  const src = String(text || '').replace(/^\ufeff/, '');
+
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    const next = src[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && next === '"') {
+        field += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === ',' && !inQuotes) {
+      row.push(field);
+      field = '';
+      continue;
+    }
+
+    if ((ch === '\n' || ch === '\r') && !inQuotes) {
+      if (ch === '\r' && next === '\n') i += 1;
+      row.push(field);
+      if (row.some((value) => String(value || '').trim() !== '')) rows.push(row);
+      row = [];
+      field = '';
+      continue;
+    }
+
+    field += ch;
+  }
+
+  row.push(field);
+  if (row.some((value) => String(value || '').trim() !== '')) rows.push(row);
+  return rows;
+}
+
+function csvValue(row, indexMap, aliases) {
+  for (const name of aliases) {
+    const index = indexMap[name];
+    if (index !== undefined) return String(row[index] ?? '').trim();
+  }
+  return '';
+}
+
+function numberFromCsv(value) {
+  const cleaned = String(value || '').replace(/[^\d.-]/g, '');
+  return Number(cleaned || 0);
+}
+
+function findOrCreateImportBidder(db, name, phoneDigits) {
+  db.bidders = db.bidders || [];
+  let bidder = db.bidders.find((item) => item.name.trim() === name && normalizePhone(item.phone) === phoneDigits);
+  if (!bidder) {
+    bidder = {
+      id: makeId('b'),
+      name,
+      phone: phoneDigits,
+      items: [],
+      payments: {},
+      itemApplications: {},
+      shipping: { method: '', selectedItemIds: [], pickupDate: '', dodosiFrom: '렙타일갤러리-화성 봉담', dodosiStationId: '', dodosiTo: '', dodosiRegion: '', dodosiAddress: '', dodosiFee: 0, memo: '', status: '미신청', updatedAt: '' },
+      createdAt: new Date().toISOString()
+    };
+    db.bidders.push(bidder);
+  }
+  bidder.items = bidder.items || [];
+  bidder.payments = bidder.payments || {};
+  bidder.itemApplications = bidder.itemApplications || {};
+  bidder.shipping = bidder.shipping || { status: '미신청' };
+  return bidder;
+}
+
+function importCsvIntoDb(db, csvText, mode = 'merge') {
+  const rows = parseCsvText(csvText);
+  if (rows.length < 2) return { biddersImported: 0, itemsImported: 0, applicationsImported: 0, skipped: 0 };
+
+  const headers = rows[0].map((header) => String(header || '').replace(/^\ufeff/, '').trim());
+  const indexMap = Object.fromEntries(headers.map((header, index) => [header, index]));
+
+  if (!headers.includes('낙찰자명') || !headers.includes('전화번호') || !headers.includes('낙찰개체')) {
+    throw new Error('CSV 헤더가 맞지 않습니다. 관리자 페이지에서 다운로드한 CSV 형식으로 업로드해 주세요.');
+  }
+
+  if (mode === 'replace') {
+    db.bidders = [];
+  } else {
+    db.bidders = db.bidders || [];
+  }
+
+  const touchedBidders = new Set();
+  let itemsImported = 0;
+  let applicationsImported = 0;
+  let skipped = 0;
+
+  rows.slice(1).forEach((row) => {
+    const name = csvValue(row, indexMap, ['낙찰자명', '성함', '이름']);
+    const phoneDigits = normalizePhone(csvValue(row, indexMap, ['전화번호', '연락처', '휴대폰']));
+    const title = csvValue(row, indexMap, ['낙찰개체', '낙찰 개체', '개체명']);
+    if (!name || !phoneDigits || !title) {
+      skipped += 1;
+      return;
+    }
+
+    const auctionTypeRaw = csvValue(row, indexMap, ['경매구분', '경매 구분']);
+    const auctionType = ['라이브경매', '밴드경매'].includes(auctionTypeRaw) ? auctionTypeRaw : '';
+    const auctionDate = csvValue(row, indexMap, ['경매날짜', '경매 날짜']);
+    const price = numberFromCsv(csvValue(row, indexMap, ['낙찰원금', '낙찰 금액', '금액']));
+    const detail = csvValue(row, indexMap, ['개체정보', '개체 정보']);
+    const vendor = csvValue(row, indexMap, ['업체', '출품 업체']) || '렙타일갤러리';
+    const paymentMethod = normalizePaymentMethod(csvValue(row, indexMap, ['결제방식', '결제 방식']) || '이체');
+    const method = csvValue(row, indexMap, ['수령방법', '수령 방법']);
+    const pickupDate = csvValue(row, indexMap, ['방문수령날짜', '방문수령 날짜']);
+    const dodosiFrom = csvValue(row, indexMap, ['도도시 맡기는곳', '도도시 맡기는 곳']) || '렙타일갤러리-화성 봉담';
+    const dodosiTo = csvValue(row, indexMap, ['도도시 받는곳', '도도시 받는 곳']);
+    const memo = csvValue(row, indexMap, ['메모', '요청사항', '메모 또는 요청사항']);
+    const status = csvValue(row, indexMap, ['상태']) || '미신청';
+    const updatedAt = csvValue(row, indexMap, ['신청/수정일', '수정일', '신청일']) || new Date().toISOString();
+
+    const bidder = findOrCreateImportBidder(db, name, phoneDigits);
+    touchedBidders.add(bidder.id);
+
+    let item = bidder.items.find((entry) =>
+      String(entry.title || '').trim() === title &&
+      String(entry.auctionDate || '').trim() === auctionDate &&
+      Number(entry.price || 0) === price
+    );
+
+    if (!item) {
+      item = {
+        id: makeId('i'),
+        vendor,
+        auctionType,
+        auctionDate,
+        title,
+        detail,
+        price
+      };
+      bidder.items.push(item);
+      itemsImported += 1;
+    } else {
+      item.vendor = vendor;
+      item.auctionType = auctionType;
+      item.auctionDate = auctionDate;
+      item.title = title;
+      item.detail = detail;
+      item.price = price;
+      itemsImported += 1;
+    }
+
+    bidder.payments[item.id] = paymentMethod;
+
+    const hasApplication = status !== '미신청' || method || pickupDate || dodosiTo || memo;
+    if (hasApplication) {
+      const application = {
+        itemId: item.id,
+        method,
+        paymentMethod,
+        pickupDate,
+        dodosiFrom,
+        dodosiStationId: '',
+        dodosiTo,
+        dodosiRegion: '',
+        dodosiAddress: '',
+        dodosiFee: 0,
+        memo,
+        status,
+        updatedAt
+      };
+      application.paymentSummary = calculateSingleItemApplication(item, application, getSettings(db));
+      bidder.itemApplications[item.id] = application;
+      bidder.shipping = {
+        ...(bidder.shipping || {}),
+        status: '신청완료',
+        updatedAt
+      };
+      applicationsImported += 1;
+    } else if (bidder.itemApplications[item.id] && mode === 'replace') {
+      delete bidder.itemApplications[item.id];
+    }
+  });
+
+  return {
+    biddersImported: touchedBidders.size,
+    itemsImported,
+    applicationsImported,
+    skipped
+  };
+}
+
+
 function csvEscape(value) {
   const text = String(value ?? '');
   if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
   return text;
 }
+
+
+app.post('/api/admin/import.csv', requireAdmin, (req, res) => {
+  const csvText = String(req.body.csvText || '');
+  const mode = req.body.mode === 'replace' ? 'replace' : 'merge';
+  if (!csvText.trim()) return res.status(400).json({ message: 'CSV 파일 내용이 비어 있습니다.' });
+
+  const db = readDb();
+  const result = importCsvIntoDb(db, csvText, mode);
+  writeDb(db);
+  res.json({
+    ok: true,
+    mode,
+    ...result,
+    bidders: (db.bidders || []).map((bidder) => ({ ...bidder, totals: bidderTotals(bidder, getSettings(db)) })),
+    settings: getSettings(db)
+  });
+});
 
 app.get('/api/admin/export.csv', requireAdmin, (req, res) => {
   const db = readDb();
