@@ -8,7 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'rg2026!';
-const APP_VERSION = 'v28-csv-upload-fixed';
+const APP_VERSION = 'v29-csv-upload-final';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 console.log(`데이터 저장 위치: ${DB_PATH}`);

@@ -1,3 +1,44 @@
+# Reptile Gallery 결제/수령 신청 사이트 v29 - CSV 업로드 최종본
+
+## 반드시 이렇게 업로드하세요
+
+Render 설정이 아래와 같으면:
+
+```text
+Build Command: cd reptile-gallery-shipping && npm install
+Start Command: cd reptile-gallery-shipping && npm start
+```
+
+GitHub에서 반드시 `reptile-gallery-shipping` 폴더를 열고, 그 안에 이 ZIP 안의 파일들을 덮어올려야 합니다.
+
+이 ZIP은 압축을 풀면 바로 아래 파일들이 보입니다.
+
+```text
+server.js
+package.json
+public/
+data/
+README.md
+```
+
+즉, GitHub의 `reptile-gallery-shipping` 폴더 안에 그대로 업로드하는 전용 파일입니다.
+
+## 적용 확인
+
+배포 로그에 아래가 나와야 정상입니다.
+
+```text
+reptile-gallery-shipping@1.0.29 start
+렙타일갤러리 결제/수령 신청 사이트가 실행되었습니다. v29-csv-upload-final
+```
+
+관리자 페이지 상단에 아래 문구가 보여야 정상입니다.
+
+```text
+v29 CSV 업로드 최종 적용됨
+```
+
+
 # Reptile Gallery 결제/수령 신청 사이트 v28 - CSV 업로드 확실히 표시
 
 ## 이번 수정
