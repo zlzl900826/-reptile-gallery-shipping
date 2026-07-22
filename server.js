@@ -8,7 +8,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'rg2026!';
-const DB_PATH = path.join(__dirname, 'data', 'db.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const DB_PATH = path.join(DATA_DIR, 'db.json');
+console.log(`데이터 저장 위치: ${DB_PATH}`);
 
 app.use(cors());
 app.use(express.json({ limit: '3mb' }));
@@ -23,6 +25,25 @@ function writeDb(db) {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8');
 }
+
+app.get('/api/storage-status', requireAdmin, (req, res) => {
+  let exists = false;
+  let size = 0;
+  let modifiedAt = null;
+  try {
+    const stat = fs.existsSync(DB_PATH) ? fs.statSync(DB_PATH) : null;
+    exists = !!stat;
+    size = stat ? stat.size : 0;
+    modifiedAt = stat ? stat.mtime.toISOString() : null;
+  } catch (err) {}
+  res.json({
+    dataDir: DATA_DIR,
+    dbPath: DB_PATH,
+    exists,
+    size,
+    modifiedAt
+  });
+});
 
 function normalizePhone(value = '') { return String(value).replace(/\D/g, ''); }
 function makeId(prefix) { return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; }

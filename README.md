@@ -1,13 +1,53 @@
-# Reptile Gallery 결제/수령 신청 사이트 v24 Render 배포 안정화
+# Reptile Gallery 결제/수령 신청 사이트 v25 - Persistent Disk 안정화
 
 ## 이번 수정
-- Render 배포 시 Node.js 26 설치에서 오래 멈추는 문제를 줄이기 위해 Node 버전을 20.x로 고정했습니다.
-- GitHub에 이 버전 파일로 덮어올린 뒤 Render에서 Clear build cache & deploy를 누르세요.
+- 데이터 저장 위치를 환경변수 `DATA_DIR`로 지정할 수 있게 수정
+- Render Persistent Disk는 `/var/data`에 붙이는 것을 권장
+- 서버 시작 로그에 실제 `db.json` 저장 위치가 출력됨
+- 관리자 확인용 저장소 상태 API 추가: `/api/storage-status`
 
-## Render 설정
+## Render 권장 설정
+
+### Disk
+Mount Path:
+```text
+/var/data
+```
+
+### Environment Variable
+```text
+DATA_DIR=/var/data
+ADMIN_PASSWORD=원하는비밀번호
+```
+
+### Build Command
+```bash
+cd reptile-gallery-shipping && npm install
+```
+
+### Start Command
+```bash
+cd reptile-gallery-shipping && npm start
+```
+
+배포 후 Logs에 아래처럼 나와야 정상입니다.
+
+```text
+데이터 저장 위치: /var/data/db.json
+```
+
+
+# Reptile Gallery 결제/수령 신청 사이트 v24 - Render 배포 수정본
+
+## Render 배포 멈춤 수정
+- package-lock.json 제거
+- Node.js 버전 20.x로 고정
+- npm 공식 registry 사용 설정 추가
+
+## Render 설정값
 Build Command:
 ```bash
-npm install
+npm install --package-lock=false --registry=https://registry.npmjs.org/
 ```
 
 Start Command:
@@ -15,9 +55,7 @@ Start Command:
 npm start
 ```
 
-Root Directory:
-- GitHub 저장소 첫 화면에 server.js/package.json이 바로 보이면 비워두세요.
-- 저장소 안에 reptile-gallery-shipping 폴더가 있고 그 안에 server.js/package.json이 있으면 `reptile-gallery-shipping`으로 설정하세요.
+배포가 멈췄던 기존 서비스에서는 `Manual Deploy → Clear build cache & deploy`로 다시 배포하세요.
 
 
 # Reptile Gallery 결제/수령 신청 사이트 v23
