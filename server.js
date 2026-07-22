@@ -8,13 +8,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'rg2026!';
-const APP_VERSION = 'v29-csv-upload-final';
+const APP_VERSION = 'v30-csv-import';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 console.log(`데이터 저장 위치: ${DB_PATH}`);
 
 app.use(cors());
-app.use(express.json({ limit: '3mb' }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 function readDb() {
@@ -26,25 +26,6 @@ function writeDb(db) {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8');
 }
-
-app.get('/api/storage-status', requireAdmin, (req, res) => {
-  let exists = false;
-  let size = 0;
-  let modifiedAt = null;
-  try {
-    const stat = fs.existsSync(DB_PATH) ? fs.statSync(DB_PATH) : null;
-    exists = !!stat;
-    size = stat ? stat.size : 0;
-    modifiedAt = stat ? stat.mtime.toISOString() : null;
-  } catch (err) {}
-  res.json({
-    dataDir: DATA_DIR,
-    dbPath: DB_PATH,
-    exists,
-    size,
-    modifiedAt
-  });
-});
 
 function normalizePhone(value = '') { return String(value).replace(/\D/g, ''); }
 function makeId(prefix) { return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; }
@@ -620,90 +601,85 @@ function parseCsvText(text = '') {
   return rows;
 }
 
-function csvValue(row, indexMap, aliases) {
-  for (const name of aliases) {
-    const index = indexMap[name];
-    if (index !== undefined) return String(row[index] ?? '').trim();
+function csvLookup(row, indexMap, names) {
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(indexMap, name)) return String(row[indexMap[name]] ?? '').trim();
   }
   return '';
 }
 
-function numberFromCsv(value) {
-  const cleaned = String(value || '').replace(/[^\d.-]/g, '');
+function csvNumber(value) {
+  const cleaned = String(value || '').replace(/[^0-9.-]/g, '');
   return Number(cleaned || 0);
 }
 
-function findOrCreateImportBidder(db, name, phoneDigits) {
-  db.bidders = db.bidders || [];
-  let bidder = db.bidders.find((item) => item.name.trim() === name && normalizePhone(item.phone) === phoneDigits);
-  if (!bidder) {
-    bidder = {
-      id: makeId('b'),
-      name,
-      phone: phoneDigits,
-      items: [],
-      payments: {},
-      itemApplications: {},
-      shipping: { method: '', selectedItemIds: [], pickupDate: '', dodosiFrom: '렙타일갤러리-화성 봉담', dodosiStationId: '', dodosiTo: '', dodosiRegion: '', dodosiAddress: '', dodosiFee: 0, memo: '', status: '미신청', updatedAt: '' },
-      createdAt: new Date().toISOString()
-    };
-    db.bidders.push(bidder);
-  }
-  bidder.items = bidder.items || [];
-  bidder.payments = bidder.payments || {};
-  bidder.itemApplications = bidder.itemApplications || {};
-  bidder.shipping = bidder.shipping || { status: '미신청' };
-  return bidder;
+function newBlankBidder(name, phoneDigits) {
+  return {
+    id: makeId('b'),
+    name,
+    phone: phoneDigits,
+    items: [],
+    payments: {},
+    itemApplications: {},
+    shipping: { method: '', selectedItemIds: [], pickupDate: '', dodosiFrom: '렙타일갤러리-화성 봉담', dodosiStationId: '', dodosiTo: '', dodosiRegion: '', dodosiAddress: '', dodosiFee: 0, memo: '', status: '미신청', updatedAt: '' },
+    createdAt: new Date().toISOString()
+  };
 }
 
-function importCsvIntoDb(db, csvText, mode = 'merge') {
+function importCsvRows(db, csvText, mode = 'merge') {
   const rows = parseCsvText(csvText);
-  if (rows.length < 2) return { biddersImported: 0, itemsImported: 0, applicationsImported: 0, skipped: 0 };
+  if (rows.length < 2) throw new Error('CSV에 데이터가 없습니다. 첫 줄은 제목, 둘째 줄부터 데이터가 있어야 합니다.');
 
-  const headers = rows[0].map((header) => String(header || '').replace(/^\ufeff/, '').trim());
-  const indexMap = Object.fromEntries(headers.map((header, index) => [header, index]));
+  const headers = rows[0].map((value) => String(value || '').replace(/^\ufeff/, '').trim());
+  const indexMap = Object.fromEntries(headers.map((value, index) => [value, index]));
+  const required = ['낙찰자명', '전화번호', '낙찰개체'];
+  const missing = required.filter((name) => !Object.prototype.hasOwnProperty.call(indexMap, name));
+  if (missing.length) throw new Error(`CSV 제목줄에 ${missing.join(', ')} 항목이 없습니다. 관리자 페이지의 CSV 다운로드 파일이나 빈 양식을 사용해 주세요.`);
 
-  if (!headers.includes('낙찰자명') || !headers.includes('전화번호') || !headers.includes('낙찰개체')) {
-    throw new Error('CSV 헤더가 맞지 않습니다. 관리자 페이지에서 다운로드한 CSV 형식으로 업로드해 주세요.');
-  }
+  if (mode === 'replace') db.bidders = [];
+  db.bidders = db.bidders || [];
 
-  if (mode === 'replace') {
-    db.bidders = [];
-  } else {
-    db.bidders = db.bidders || [];
-  }
-
-  const touchedBidders = new Set();
-  let itemsImported = 0;
-  let applicationsImported = 0;
-  let skipped = 0;
+  const touched = new Set();
+  let itemCount = 0;
+  let applicationCount = 0;
+  let skippedCount = 0;
+  const settings = getSettings(db);
 
   rows.slice(1).forEach((row) => {
-    const name = csvValue(row, indexMap, ['낙찰자명', '성함', '이름']);
-    const phoneDigits = normalizePhone(csvValue(row, indexMap, ['전화번호', '연락처', '휴대폰']));
-    const title = csvValue(row, indexMap, ['낙찰개체', '낙찰 개체', '개체명']);
-    if (!name || !phoneDigits || !title) {
-      skipped += 1;
+    const name = csvLookup(row, indexMap, ['낙찰자명', '성함', '이름']);
+    const phone = normalizePhone(csvLookup(row, indexMap, ['전화번호', '연락처', '휴대폰']));
+    const title = csvLookup(row, indexMap, ['낙찰개체', '낙찰 개체', '개체명']);
+
+    if (!name || !phone || !title) {
+      skippedCount += 1;
       return;
     }
 
-    const auctionTypeRaw = csvValue(row, indexMap, ['경매구분', '경매 구분']);
-    const auctionType = ['라이브경매', '밴드경매'].includes(auctionTypeRaw) ? auctionTypeRaw : '';
-    const auctionDate = csvValue(row, indexMap, ['경매날짜', '경매 날짜']);
-    const price = numberFromCsv(csvValue(row, indexMap, ['낙찰원금', '낙찰 금액', '금액']));
-    const detail = csvValue(row, indexMap, ['개체정보', '개체 정보']);
-    const vendor = csvValue(row, indexMap, ['업체', '출품 업체']) || '렙타일갤러리';
-    const paymentMethod = normalizePaymentMethod(csvValue(row, indexMap, ['결제방식', '결제 방식']) || '이체');
-    const method = csvValue(row, indexMap, ['수령방법', '수령 방법']);
-    const pickupDate = csvValue(row, indexMap, ['방문수령날짜', '방문수령 날짜']);
-    const dodosiFrom = csvValue(row, indexMap, ['도도시 맡기는곳', '도도시 맡기는 곳']) || '렙타일갤러리-화성 봉담';
-    const dodosiTo = csvValue(row, indexMap, ['도도시 받는곳', '도도시 받는 곳']);
-    const memo = csvValue(row, indexMap, ['메모', '요청사항', '메모 또는 요청사항']);
-    const status = csvValue(row, indexMap, ['상태']) || '미신청';
-    const updatedAt = csvValue(row, indexMap, ['신청/수정일', '수정일', '신청일']) || new Date().toISOString();
+    let bidder = db.bidders.find((entry) => entry.name.trim() === name && normalizePhone(entry.phone) === phone);
+    if (!bidder) {
+      bidder = newBlankBidder(name, phone);
+      db.bidders.push(bidder);
+    }
+    bidder.items = bidder.items || [];
+    bidder.payments = bidder.payments || {};
+    bidder.itemApplications = bidder.itemApplications || {};
+    bidder.shipping = bidder.shipping || { status: '미신청' };
+    touched.add(bidder.id);
 
-    const bidder = findOrCreateImportBidder(db, name, phoneDigits);
-    touchedBidders.add(bidder.id);
+    const auctionTypeRaw = csvLookup(row, indexMap, ['경매구분', '경매 구분']);
+    const auctionType = ['라이브경매', '밴드경매'].includes(auctionTypeRaw) ? auctionTypeRaw : '';
+    const auctionDate = csvLookup(row, indexMap, ['경매날짜', '경매 날짜']);
+    const price = csvNumber(csvLookup(row, indexMap, ['낙찰원금', '낙찰 금액', '금액']));
+    const detail = csvLookup(row, indexMap, ['개체정보', '개체 정보']);
+    const vendor = csvLookup(row, indexMap, ['업체', '출품 업체']) || '렙타일갤러리';
+    const paymentMethod = normalizePaymentMethod(csvLookup(row, indexMap, ['결제방식', '결제 방식']) || '이체');
+    const method = csvLookup(row, indexMap, ['수령방법', '수령 방법']);
+    const pickupDate = csvLookup(row, indexMap, ['방문수령날짜', '방문수령 날짜']);
+    const dodosiFrom = csvLookup(row, indexMap, ['도도시 맡기는곳', '도도시 맡기는 곳']) || '렙타일갤러리-화성 봉담';
+    const dodosiTo = csvLookup(row, indexMap, ['도도시 받는곳', '도도시 받는 곳']);
+    const memo = csvLookup(row, indexMap, ['메모', '요청사항', '메모 또는 요청사항']);
+    const status = csvLookup(row, indexMap, ['상태']) || '미신청';
+    const updatedAt = csvLookup(row, indexMap, ['신청/수정일', '수정일', '신청일']) || new Date().toISOString();
 
     let item = bidder.items.find((entry) =>
       String(entry.title || '').trim() === title &&
@@ -712,17 +688,8 @@ function importCsvIntoDb(db, csvText, mode = 'merge') {
     );
 
     if (!item) {
-      item = {
-        id: makeId('i'),
-        vendor,
-        auctionType,
-        auctionDate,
-        title,
-        detail,
-        price
-      };
+      item = { id: makeId('i'), vendor, auctionType, auctionDate, title, detail, price };
       bidder.items.push(item);
-      itemsImported += 1;
     } else {
       item.vendor = vendor;
       item.auctionType = auctionType;
@@ -730,9 +697,8 @@ function importCsvIntoDb(db, csvText, mode = 'merge') {
       item.title = title;
       item.detail = detail;
       item.price = price;
-      itemsImported += 1;
     }
-
+    itemCount += 1;
     bidder.payments[item.id] = paymentMethod;
 
     const hasApplication = status !== '미신청' || method || pickupDate || dodosiTo || memo;
@@ -752,27 +718,15 @@ function importCsvIntoDb(db, csvText, mode = 'merge') {
         status,
         updatedAt
       };
-      application.paymentSummary = calculateSingleItemApplication(item, application, getSettings(db));
+      application.paymentSummary = calculateSingleItemApplication(item, application, settings);
       bidder.itemApplications[item.id] = application;
-      bidder.shipping = {
-        ...(bidder.shipping || {}),
-        status: '신청완료',
-        updatedAt
-      };
-      applicationsImported += 1;
-    } else if (bidder.itemApplications[item.id] && mode === 'replace') {
-      delete bidder.itemApplications[item.id];
+      bidder.shipping = { ...(bidder.shipping || {}), status: '신청완료', updatedAt };
+      applicationCount += 1;
     }
   });
 
-  return {
-    biddersImported: touchedBidders.size,
-    itemsImported,
-    applicationsImported,
-    skipped
-  };
+  return { biddersImported: touched.size, itemsImported: itemCount, applicationsImported: applicationCount, skipped: skippedCount };
 }
-
 
 function csvEscape(value) {
   const text = String(value ?? '');
@@ -782,20 +736,24 @@ function csvEscape(value) {
 
 
 app.post('/api/admin/import.csv', requireAdmin, (req, res) => {
-  const csvText = String(req.body.csvText || '');
-  const mode = req.body.mode === 'replace' ? 'replace' : 'merge';
-  if (!csvText.trim()) return res.status(400).json({ message: 'CSV 파일 내용이 비어 있습니다.' });
+  try {
+    const csvText = String(req.body.csvText || '');
+    const mode = req.body.mode === 'replace' ? 'replace' : 'merge';
+    if (!csvText.trim()) return res.status(400).json({ message: 'CSV 파일 내용이 비어 있습니다.' });
 
-  const db = readDb();
-  const result = importCsvIntoDb(db, csvText, mode);
-  writeDb(db);
-  res.json({
-    ok: true,
-    mode,
-    ...result,
-    bidders: (db.bidders || []).map((bidder) => ({ ...bidder, totals: bidderTotals(bidder, getSettings(db)) })),
-    settings: getSettings(db)
-  });
+    const db = readDb();
+    const result = importCsvRows(db, csvText, mode);
+    writeDb(db);
+    res.json({
+      ok: true,
+      mode,
+      ...result,
+      bidders: (db.bidders || []).map((bidder) => ({ ...bidder, totals: bidderTotals(bidder, getSettings(db)) })),
+      settings: getSettings(db)
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'CSV 업로드에 실패했습니다.' });
+  }
 });
 
 app.get('/api/admin/export.csv', requireAdmin, (req, res) => {
@@ -837,8 +795,8 @@ app.get('/api/admin/export.csv', requireAdmin, (req, res) => {
   res.send(csv);
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: APP_VERSION }));
-app.get('/api/version', (req, res) => res.json({ version: APP_VERSION }));
+app.get('/health', (req, res) => res.json({ ok: true, version: APP_VERSION, dbPath: DB_PATH }));
+app.get('/api/version', (req, res) => res.json({ version: APP_VERSION, dbPath: DB_PATH }));
 
 function getLanUrls(port) {
   const interfaces = os.networkInterfaces();
